@@ -29,7 +29,8 @@ export PROJECT_DIR="${PROJECT_DIR:-/workspace/runs}"
 TAR_PATH="/workspace/output/${RUN_NAME}.tar.gz"
 if [[ -f "${TAR_PATH}" ]]; then
   echo "[entrypoint] Found existing output tarball at ${TAR_PATH}, skipping training."
-  exit 0
+  echo "[entrypoint] Keeping container alive for artifact download; pod will be stopped by orchestrator."
+  exec sleep infinity
 fi
 
 mkdir -p "${DATA_ROOT}" /workspace/output "${PROJECT_DIR}"
@@ -64,4 +65,6 @@ tar -czf "${TAR_PATH}" -C /workspace runs || {
 }
 
 echo "[entrypoint] Entry point completed successfully"
+echo "[entrypoint] Keeping container alive for artifact download; pod will be stopped by orchestrator."
+exec sleep infinity
 
