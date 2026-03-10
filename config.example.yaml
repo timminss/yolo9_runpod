@@ -1,0 +1,50 @@
+roboflow_dataset_url: "https://universe.roboflow.com/YOUR_WORKSPACE/YOUR_DATASET/download?format=yolov9"
+
+# Ultralytics / YOLO model configuration
+model_name: "yolo9-t"         # Requested model; adjust if your Ultralytics version uses a different alias
+imgsz: 640                    # Training image size
+batch: 16                     # Batch size (fits comfortably on a 24GB GPU for many datasets)
+epochs: 100                   # Number of training epochs
+workers: 8                    # Data loader workers
+
+# Run name used for organizing artifacts both remotely and locally
+run_name: "latest"
+
+# RunPod configuration
+runpod:
+  # Your RunPod REST API base URL and version
+  # As of current docs, Pod operations use https://rest.runpod.io/v1
+  api_base_url: "https://rest.runpod.io"
+  api_version: "v1"
+
+  # Cloud / region / GPU settings
+  cloud_type: "SECURE"                      # Typically SECURE or COMMUNITY
+  region: "EU-1"                            # Example; pick a region that offers your GPU type
+  gpu_type: "NVIDIA GeForce RTX 3090"       # Default GPU; adjust to match an available RunPod SKU exactly
+  gpu_count: 1
+
+  # Storage sizing (GB)
+  container_disk_in_gb: 100                 # Ephemeral container disk
+  volume_in_gb: 150                         # Optional persistent volume; adjust for dataset/checkpoints
+
+  # Container / image settings
+  image: "ultralytics/ultralytics:latest"   # Ultralytics official image with YOLO support and CUDA
+  # Command executed inside the pod to start training
+  # The local orchestration script will mount env vars so this entrypoint
+  # can download the dataset, run training, and package outputs.
+  command: [
+    "bash",
+    "-lc",
+    "bash /workspace/entrypoint.sh"
+  ]
+
+  # Optional idle timeout in minutes for automatic shutdown of idle pods
+  idle_timeout_minutes: 10
+
+  # Whether the local script should delete the pod after successful completion
+  auto_delete_pod: true
+
+  # File path in the pod that will contain a tarball of training artifacts.
+  # The orchestration script will download this path after training finishes.
+  output_tar_path: "/workspace/output/${RUN_NAME}.tar.gz"
+

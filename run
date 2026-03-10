@@ -1,0 +1,5 @@
+docker run --rm \
+  -v "$PWD/volume:/app/volume" \
+  runpod-yolo-orchestrator \
+  --config volume/config.yaml \
+  --run-name test_run

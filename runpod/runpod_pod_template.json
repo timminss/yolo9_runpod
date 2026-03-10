@@ -1,0 +1,25 @@
+{
+  "cloudType": "SECURE",
+  "gpuCount": 1,
+  "gpuTypeId": "NVIDIA GeForce RTX 3090",
+  "minMemoryInGb": 16,
+  "minVcpuCount": 4,
+  "volumeInGb": 150,
+  "containerDiskInGb": 100,
+  "imageName": "ultralytics/ultralytics:latest",
+  "name": "ultralytics-yolo-training",
+  "ports": [],
+  "env": [],
+  "dockerArgs": "",
+  "volumeMountPath": "/workspace",
+  "supportPublicIp": false,
+  "gpuDescription": "Default template for YOLO training on a 3090-class GPU",
+  "idleTimeoutInSeconds": 600,
+  "cloudInit": "",
+  "command": [
+    "bash",
+    "-lc",
+    "bash /workspace/entrypoint.sh"
+  ]
+}
+
