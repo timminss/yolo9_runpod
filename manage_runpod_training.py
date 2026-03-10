@@ -145,18 +145,55 @@ def _unwrap_pod(pod: Dict[str, Any]) -> Dict[str, Any]:
     return pod
 
 
-def wait_for_pod_running(api_base: str, api_key: str, pod_id: str, poll_interval: int = 30) -> Dict[str, Any]:
-    """Poll until the pod is RUNNING; return the pod dict (with publicIp/portMappings) for SSH/scp."""
+def _pod_status(pod: Dict[str, Any]) -> str:
+    """Resolve status from pod (API may use status or desiredStatus)."""
+    return pod.get("status") or pod.get("desiredStatus") or ""
+
+
+def _pod_has_ssh(pod: Dict[str, Any]) -> bool:
+    """Return True if pod has publicIp and SSH port mapping."""
+    ip = pod.get("publicIp")
+    port_mappings = pod.get("portMappings") or {}
+    port = port_mappings.get("22") or port_mappings.get(22)
+    return bool(ip and port)
+
+
+def wait_for_pod_running(
+    api_base: str,
+    api_key: str,
+    pod_id: str,
+    poll_interval: int = 30,
+    ssh_ready_timeout: int = 180,
+) -> Dict[str, Any]:
+    """
+    Poll until the pod is RUNNING and has publicIp/portMappings (so we can SSH).
+    After seeing RUNNING, keeps polling up to ssh_ready_timeout seconds for network info.
+    """
     while True:
         pod = _unwrap_pod(get_pod(api_base, api_key, pod_id))
-        status = pod.get("status") or pod.get("desiredStatus")
+        status = _pod_status(pod)
         print(f"[orchestrator] Pod {pod_id} status: {status}")
 
-        if status == "RUNNING":
-            print(f"[orchestrator] Pod {pod_id} is RUNNING")
-            return pod
         if status in ("EXITED", "TERMINATED"):
             print(f"[orchestrator] Pod {pod_id} ended before RUNNING: {status}", file=sys.stderr)
+            return pod
+
+        if status == "RUNNING":
+            if _pod_has_ssh(pod):
+                print(f"[orchestrator] Pod {pod_id} is RUNNING with SSH available")
+                return pod
+            # RUNNING but no SSH yet; wait for network info
+            deadline = time.monotonic() + ssh_ready_timeout
+            while time.monotonic() < deadline:
+                print(f"[orchestrator] Pod RUNNING, waiting for public IP / SSH port (up to {ssh_ready_timeout}s)...")
+                time.sleep(min(poll_interval, 15))
+                pod = _unwrap_pod(get_pod(api_base, api_key, pod_id))
+                if _pod_status(pod) != "RUNNING":
+                    break
+                if _pod_has_ssh(pod):
+                    print(f"[orchestrator] Pod {pod_id} has SSH available")
+                    return pod
+            # Return current pod even if SSH not ready (caller may fall back to stub)
             return pod
 
         time.sleep(poll_interval)
@@ -349,7 +386,7 @@ def main() -> None:
         pod_id = create_pod(api_base, api_key, pod_body)
         pod_info = wait_for_pod_running(api_base, api_key, pod_id)
 
-        if pod_info.get("status") == "RUNNING":
+        if _pod_status(pod_info) == "RUNNING":
             if wait_for_artifacts_ready(pod_info, output_tar_path, ssh_key_path):
                 download_artifacts_via_scp(
                     api_base, api_key, pod_id, output_tar_path, run_name, ssh_key_path, pod_info=pod_info
