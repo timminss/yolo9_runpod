@@ -1,4 +1,5 @@
 import os
+import shutil
 import sys
 from pathlib import Path
 from typing import Optional
@@ -81,6 +82,24 @@ def train() -> None:
                 file=sys.stderr,
             )
             raise
+
+    # Export best.pt to ONNX for Frigate / inference
+    weights_dir = Path(project) / run_name / "weights"
+    best_pt = weights_dir / "best.pt"
+    output_onnx = os.getenv("OUTPUT_ONNX_PATH", f"/workspace/output/{run_name}.onnx")
+    Path(output_onnx).parent.mkdir(parents=True, exist_ok=True)
+    if best_pt.exists():
+        print(f"[train_yolo] Exporting best.pt to ONNX at {output_onnx}")
+        model = YOLO(str(best_pt))
+        model.export(format="onnx", imgsz=imgsz)
+        exported = weights_dir / "best.onnx"
+        if exported.exists():
+            shutil.copy2(exported, output_onnx)
+            print(f"[train_yolo] ONNX saved to {output_onnx}")
+        else:
+            print(f"[train_yolo] WARNING: export did not produce {exported}", file=sys.stderr)
+    else:
+        print(f"[train_yolo] WARNING: no best.pt at {best_pt}, skipping ONNX export", file=sys.stderr)
 
 
 if __name__ == "__main__":

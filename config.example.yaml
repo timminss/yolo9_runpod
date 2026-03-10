@@ -31,7 +31,7 @@ runpod:
 
   # SSH / networking for automated artifact download
   # When enabled, the pod will expose SSH on a public IP so the orchestrator
-  # container can scp the output tarball back to your local machine.
+  # can scp the output ONNX model back to your local machine.
   support_public_ip: true
   ssh_ports: ["22/tcp"]                     # Ports to expose; 22/tcp required for scp
   ssh_key_path: "volume/id_rsa_runpod"     # Private key (orchestrator uses this to scp from pod)
@@ -56,7 +56,6 @@ runpod:
   # Whether the local script should delete the pod after successful completion
   auto_delete_pod: true
 
-  # File path in the pod that will contain a tarball of training artifacts.
-  # The orchestration script will download this path after training finishes.
-  output_tar_path: "/workspace/output/${RUN_NAME}.tar.gz"
+  # Path in the pod to the ONNX model (for Frigate etc). Orchestrator downloads to artifacts/<run_name>/model.onnx
+  output_onnx_path: "/workspace/output/${RUN_NAME}.onnx"
 

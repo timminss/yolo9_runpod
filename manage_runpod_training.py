@@ -275,13 +275,13 @@ def _ssh_test_file(
 
 def wait_for_artifacts_ready(
     pod_info: Dict[str, Any],
-    output_tar_path: str,
+    remote_artifact_path: str,
     ssh_key_path: str,
     poll_interval: int = 30,
     timeout_seconds: int = 86400,
 ) -> bool:
     """
-    Poll the pod via SSH until the output tarball exists (entrypoint has finished).
+    Poll the pod via SSH until the artifact file exists (entrypoint has finished).
     Return True if the file appeared, False on timeout or missing SSH info.
     """
     public_ip = pod_info.get("publicIp")
@@ -297,49 +297,33 @@ def wait_for_artifacts_ready(
     deadline = time.monotonic() + timeout_seconds
     poll_count = 0
     while time.monotonic() < deadline:
-        ok, stderr = _ssh_test_file(public_ip, ssh_port, ssh_key_path, output_tar_path)
+        ok, stderr = _ssh_test_file(public_ip, ssh_port, ssh_key_path, remote_artifact_path)
         if ok:
-            print(f"[orchestrator] Artifacts ready at {output_tar_path}")
+            print(f"[orchestrator] Artifacts ready at {remote_artifact_path}")
             return True
         poll_count += 1
-        # Log why SSH failed so user can fix (e.g. SSH lands on host not container, or no sshd)
         if poll_count == 1 or poll_count % 10 == 0:
             if stderr:
                 print(f"[orchestrator] SSH check failed: {stderr}", file=sys.stderr)
             else:
                 print(f"[orchestrator] SSH check failed (exit non-zero, no stderr)", file=sys.stderr)
-        print(f"[orchestrator] Waiting for {output_tar_path} (next check in {poll_interval}s)...")
+        print(f"[orchestrator] Waiting for {remote_artifact_path} (next check in {poll_interval}s)...")
         time.sleep(poll_interval)
-    print("[orchestrator] Timeout waiting for artifacts tarball", file=sys.stderr)
+    print("[orchestrator] Timeout waiting for artifact file", file=sys.stderr)
     return False
 
 
-def download_artifacts_stub(output_tar_path: str, run_name: str) -> Path:
-    """
-    Placeholder for an automated artifact download mechanism.
-
-    At the time of writing, the recommended approaches for transferring files
-    from Pods are:
-      - runpodctl (inside the pod)
-      - SCP / rsync using the pod's public IP and port mappings
-      - S3-compatible APIs for network volumes
-
-    Since these rely on environment-specific setup (SSH keys, network volumes,
-    S3 credentials), this helper currently just documents the expected path
-    inside the pod and prepares a local directory where you can place the
-    downloaded tarball.
-    """
+def download_artifacts_stub(remote_onnx_path: str, run_name: str) -> Path:
+    """When automated download is not possible, document where to get the ONNX file."""
     artifacts_root = Path("artifacts") / run_name
     artifacts_root.mkdir(parents=True, exist_ok=True)
-
+    local_onnx = artifacts_root / "model.onnx"
     print(
         "[orchestrator] NOTE: Automated file transfer from the pod is environment-specific.\n"
-        f"  - Expected tarball in pod: {output_tar_path}\n"
-        f"  - Place the downloaded file at: {artifacts_root / 'artifacts.tar.gz'}\n"
-        "Once downloaded, you can extract it locally with:\n"
-        f"  tar -xzf {artifacts_root / 'artifacts.tar.gz'} -C {artifacts_root}\n"
+        f"  - Expected ONNX in pod: {remote_onnx_path}\n"
+        f"  - Place the downloaded file at: {local_onnx}\n"
+        "Use this path in Frigate or other inference config."
     )
-
     return artifacts_root
 
 
@@ -347,24 +331,17 @@ def download_artifacts_via_scp(
     api_base: str,
     api_key: str,
     pod_id: str,
-    output_tar_path: str,
+    remote_onnx_path: str,
     run_name: str,
     ssh_key_path: str,
     pod_info: Dict[str, Any] | None = None,
 ) -> Path:
     """
-    Download the output tarball from the Pod using scp.
-
-    This requires:
-      - The Pod to expose SSH on a public IP (supportPublicIp: true, ports including 22/tcp).
-      - An SSH private key accessible in the orchestrator container at ssh_key_path.
-
-    If pod_info is provided (e.g. from wait_for_pod_completion), use it for publicIp/portMappings
-    so we can scp even after the pod has exited and the API may no longer return them.
+    Download the ONNX model from the Pod using scp to artifacts/<run_name>/model.onnx.
     """
     artifacts_root = Path("artifacts") / run_name
     artifacts_root.mkdir(parents=True, exist_ok=True)
-    local_tar = artifacts_root / "artifacts.tar.gz"
+    local_onnx = artifacts_root / "model.onnx"
 
     if pod_info:
         pod = pod_info
@@ -372,7 +349,6 @@ def download_artifacts_via_scp(
         pod = _unwrap_pod(get_pod(api_base, api_key, pod_id))
     public_ip = pod.get("publicIp")
     port_mappings = pod.get("portMappings") or {}
-    # portMappings can be {"22": 12345}; key might be string or int
     ssh_port = port_mappings.get("22") or port_mappings.get(22)
 
     if not public_ip or not ssh_port:
@@ -381,7 +357,7 @@ def download_artifacts_via_scp(
             "Falling back to manual download instructions.",
             file=sys.stderr,
         )
-        return download_artifacts_stub(output_tar_path, run_name)
+        return download_artifacts_stub(remote_onnx_path, run_name)
 
     if not Path(ssh_key_path).exists():
         print(
@@ -389,43 +365,39 @@ def download_artifacts_via_scp(
             "Falling back to manual download instructions.",
             file=sys.stderr,
         )
-        return download_artifacts_stub(output_tar_path, run_name)
+        return download_artifacts_stub(remote_onnx_path, run_name)
 
     scp_cmd = [
         "scp",
-        "-i",
-        ssh_key_path,
-        "-o",
-        "StrictHostKeyChecking=no",
-        "-P",
-        str(ssh_port),
-        f"root@{public_ip}:{output_tar_path}",
-        str(local_tar),
+        "-i", ssh_key_path,
+        "-o", "StrictHostKeyChecking=no",
+        "-P", str(ssh_port),
+        f"root@{public_ip}:{remote_onnx_path}",
+        str(local_onnx),
     ]
 
-    print(f"[orchestrator] Downloading artifacts via scp from {public_ip}:{ssh_port}")
+    print(f"[orchestrator] Downloading ONNX via scp from {public_ip}:{ssh_port}")
     try:
         subprocess.run(scp_cmd, check=True)
-        print(f"[orchestrator] Artifacts downloaded to {local_tar}")
+        print(f"[orchestrator] ONNX saved to {local_onnx}")
     except subprocess.CalledProcessError as exc:
-        # File may be inside container while SSH lands on host; try streaming from container
         print(f"[orchestrator] scp failed: {exc}. Trying download from container via SSH...", file=sys.stderr)
-        stream_cmd = f"docker exec $(docker ps -q) cat {output_tar_path!r}"
+        stream_cmd = f"docker exec $(docker ps -q) cat {remote_onnx_path!r}"
         ssh_cmd = [
             "ssh", "-i", ssh_key_path,
             "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10", "-o", "BatchMode=yes",
             "-p", str(ssh_port), f"root@{public_ip}", stream_cmd,
         ]
         try:
-            with open(local_tar, "wb") as f:
+            with open(local_onnx, "wb") as f:
                 subprocess.run(ssh_cmd, stdout=f, check=True, stderr=subprocess.PIPE)
-            print(f"[orchestrator] Artifacts downloaded to {local_tar} (from container)")
+            print(f"[orchestrator] ONNX saved to {local_onnx} (from container)")
         except subprocess.CalledProcessError:
             print(
                 "[orchestrator] Container stream also failed. Falling back to manual instructions.",
                 file=sys.stderr,
             )
-            return download_artifacts_stub(output_tar_path, run_name)
+            return download_artifacts_stub(remote_onnx_path, run_name)
 
     return artifacts_root
 
@@ -455,8 +427,10 @@ def main() -> None:
     pod_body = build_pod_request_body(config, run_name)
     api_base = _get_api_base(runpod_cfg)
 
-    output_tar_path = runpod_cfg.get("output_tar_path", f"/workspace/output/{run_name}.tar.gz")
-    output_tar_path = output_tar_path.replace("${RUN_NAME}", run_name)
+    output_onnx_path = runpod_cfg.get("output_onnx_path", runpod_cfg.get("output_tar_path", f"/workspace/output/{run_name}.onnx"))
+    output_onnx_path = output_onnx_path.replace("${RUN_NAME}", run_name)
+    if not output_onnx_path.endswith(".onnx"):
+        output_onnx_path = output_onnx_path.replace(".tar.gz", ".onnx")
     ssh_key_path = runpod_cfg.get("ssh_key_path", "volume/id_rsa_runpod")
 
     pod_id = None
@@ -465,14 +439,13 @@ def main() -> None:
         pod_info = wait_for_pod_running(api_base, api_key, pod_id)
 
         if _pod_status(pod_info) == "RUNNING":
-            if wait_for_artifacts_ready(pod_info, output_tar_path, ssh_key_path):
+            if wait_for_artifacts_ready(pod_info, output_onnx_path, ssh_key_path):
                 download_artifacts_via_scp(
-                    api_base, api_key, pod_id, output_tar_path, run_name, ssh_key_path, pod_info=pod_info
+                    api_base, api_key, pod_id, output_onnx_path, run_name, ssh_key_path, pod_info=pod_info
                 )
         else:
-            # Pod ended before RUNNING; try download anyway in case we have connection info
             download_artifacts_via_scp(
-                api_base, api_key, pod_id, output_tar_path, run_name, ssh_key_path, pod_info=pod_info
+                api_base, api_key, pod_id, output_onnx_path, run_name, ssh_key_path, pod_info=pod_info
             )
     finally:
         if pod_id and runpod_cfg.get("auto_delete_pod", True):

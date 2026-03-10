@@ -23,12 +23,11 @@ export EPOCHS="${EPOCHS:-100}"
 export WORKERS="${WORKERS:-8}"
 export PROJECT_DIR="${PROJECT_DIR:-/workspace/runs}"
 
-# If we've already produced an output tarball for this RUN_NAME in this pod,
-# skip re-running the whole pipeline. This prevents accidental multiple runs
-# when the container is restarted or the command is invoked more than once.
-TAR_PATH="/workspace/output/${RUN_NAME}.tar.gz"
-if [[ -f "${TAR_PATH}" ]]; then
-  echo "[entrypoint] Found existing output tarball at ${TAR_PATH}, skipping training."
+# If we've already produced the ONNX output for this RUN_NAME in this pod,
+# skip re-running the whole pipeline.
+ONNX_PATH="/workspace/output/${RUN_NAME}.onnx"
+if [[ -f "${ONNX_PATH}" ]]; then
+  echo "[entrypoint] Found existing ONNX at ${ONNX_PATH}, skipping training."
   echo "[entrypoint] Keeping container alive for artifact download; pod will be stopped by orchestrator."
   exec sleep infinity
 fi
@@ -58,13 +57,7 @@ fi
 echo "[entrypoint] Training model '${MODEL_NAME}' with data '${DATA_YAML_PATH}'"
 python train_yolo.py
 
-echo "[entrypoint] Packaging training artifacts into ${TAR_PATH}"
-
-tar -czf "${TAR_PATH}" -C /workspace runs || {
-  echo "[entrypoint] WARNING: Failed to create tarball from /workspace/runs" >&2
-}
-
-echo "[entrypoint] Entry point completed successfully"
+echo "[entrypoint] Entry point completed successfully (ONNX at ${ONNX_PATH})"
 echo "[entrypoint] Keeping container alive for artifact download; pod will be stopped by orchestrator."
 exec sleep infinity
 
