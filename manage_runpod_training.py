@@ -199,10 +199,10 @@ def wait_for_pod_running(
         time.sleep(poll_interval)
 
 
-def _ssh_test_file(
-    public_ip: str, ssh_port: int, ssh_key_path: str, remote_path: str
-) -> bool:
-    """Return True if remote_path exists on the pod (via SSH)."""
+def _ssh_run(
+    public_ip: str, ssh_port: int, ssh_key_path: str, remote_cmd: str
+) -> tuple[bool, str]:
+    """Run a command over SSH; return (success, stderr)."""
     ssh_cmd = [
         "ssh",
         "-i", ssh_key_path,
@@ -211,10 +211,30 @@ def _ssh_test_file(
         "-o", "BatchMode=yes",
         "-p", str(ssh_port),
         f"root@{public_ip}",
-        f"test -f {remote_path!r}",
+        remote_cmd,
     ]
-    result = subprocess.run(ssh_cmd, capture_output=True)
-    return result.returncode == 0
+    result = subprocess.run(ssh_cmd, capture_output=True, text=True)
+    stderr = (result.stderr or "").strip()
+    return (result.returncode == 0, stderr)
+
+
+def _ssh_test_file(
+    public_ip: str, ssh_port: int, ssh_key_path: str, remote_path: str
+) -> tuple[bool, str]:
+    """
+    Return (True, "") if remote_path exists on the pod, (False, stderr) otherwise.
+    Tries direct path first (container SSH); if that fails, tries inside container via docker exec
+    (in case SSH lands on the RunPod host and the file is only in the container).
+    """
+    ok, stderr = _ssh_run(public_ip, ssh_port, ssh_key_path, f"test -f {remote_path!r}")
+    if ok:
+        return (True, "")
+    # Fallback: file might be inside container; host has Docker
+    container_cmd = f"docker exec $(docker ps -q) test -f {remote_path!r}"
+    ok2, _ = _ssh_run(public_ip, ssh_port, ssh_key_path, container_cmd)
+    if ok2:
+        return (True, "")
+    return (False, stderr)
 
 
 def wait_for_artifacts_ready(
@@ -239,10 +259,19 @@ def wait_for_artifacts_ready(
         return False
 
     deadline = time.monotonic() + timeout_seconds
+    poll_count = 0
     while time.monotonic() < deadline:
-        if _ssh_test_file(public_ip, ssh_port, ssh_key_path, output_tar_path):
+        ok, stderr = _ssh_test_file(public_ip, ssh_port, ssh_key_path, output_tar_path)
+        if ok:
             print(f"[orchestrator] Artifacts ready at {output_tar_path}")
             return True
+        poll_count += 1
+        # Log why SSH failed so user can fix (e.g. SSH lands on host not container, or no sshd)
+        if poll_count == 1 or poll_count % 10 == 0:
+            if stderr:
+                print(f"[orchestrator] SSH check failed: {stderr}", file=sys.stderr)
+            else:
+                print(f"[orchestrator] SSH check failed (exit non-zero, no stderr)", file=sys.stderr)
         print(f"[orchestrator] Waiting for {output_tar_path} (next check in {poll_interval}s)...")
         time.sleep(poll_interval)
     print("[orchestrator] Timeout waiting for artifacts tarball", file=sys.stderr)
@@ -343,11 +372,24 @@ def download_artifacts_via_scp(
         subprocess.run(scp_cmd, check=True)
         print(f"[orchestrator] Artifacts downloaded to {local_tar}")
     except subprocess.CalledProcessError as exc:
-        print(
-            f"[orchestrator] scp failed: {exc}. Falling back to manual instructions.",
-            file=sys.stderr,
-        )
-        return download_artifacts_stub(output_tar_path, run_name)
+        # File may be inside container while SSH lands on host; try streaming from container
+        print(f"[orchestrator] scp failed: {exc}. Trying download from container via SSH...", file=sys.stderr)
+        stream_cmd = f"docker exec $(docker ps -q) cat {output_tar_path!r}"
+        ssh_cmd = [
+            "ssh", "-i", ssh_key_path,
+            "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10", "-o", "BatchMode=yes",
+            "-p", str(ssh_port), f"root@{public_ip}", stream_cmd,
+        ]
+        try:
+            with open(local_tar, "wb") as f:
+                subprocess.run(ssh_cmd, stdout=f, check=True, stderr=subprocess.PIPE)
+            print(f"[orchestrator] Artifacts downloaded to {local_tar} (from container)")
+        except subprocess.CalledProcessError:
+            print(
+                "[orchestrator] Container stream also failed. Falling back to manual instructions.",
+                file=sys.stderr,
+            )
+            return download_artifacts_stub(output_tar_path, run_name)
 
     return artifacts_root
 
