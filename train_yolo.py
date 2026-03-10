@@ -18,19 +18,11 @@ def _resolve_model_name(model_name: str) -> str:
     """
     Resolve the requested model name.
 
-    This helper exists so that you can centralize any mapping between logical
-    model names you use in configs (for example, `yolo9-t`) and the concrete
-    identifiers expected by the Ultralytics package you are running inside
-    the container.
-
-    By default it returns the value unchanged, but you can extend this with
-    project-specific mappings if needed.
+    Currently this is a simple passthrough: configuration should provide
+    either a valid Ultralytics model alias (e.g., 'yolo11n') or an absolute
+    path to a .pt weights file that exists inside the container.
     """
-    mapping = {
-        # Example:
-        # "yolo9-t": "yolo11n",
-    }
-    return mapping.get(model_name, model_name)
+    return model_name
 
 
 def train() -> None:
