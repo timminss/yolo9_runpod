@@ -12,6 +12,7 @@ venv/
 config.yaml
 volume/config.yaml
 .env
+volume/id_rsa_runpod
 
 # Local artifacts and runs
 artifacts/

@@ -29,6 +29,13 @@ runpod:
   container_disk_in_gb: 100                 # Ephemeral container disk
   volume_in_gb: 150                         # Optional persistent volume; adjust for dataset/checkpoints
 
+  # SSH / networking for automated artifact download
+  # When enabled, the pod will expose SSH on a public IP so the orchestrator
+  # container can scp the output tarball back to your local machine.
+  support_public_ip: true
+  ssh_ports: ["22/tcp"]                     # Ports to expose; 22/tcp required for scp
+  ssh_key_path: "volume/id_rsa_runpod"      # Path INSIDE the orchestrator container (mounted from host)
+
   # Container / image settings
   image: "ultralytics/ultralytics:latest"   # Ultralytics official image with YOLO support and CUDA
   # Command executed inside the pod to start training.

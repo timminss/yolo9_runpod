@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -42,7 +43,11 @@ def build_pod_request_body(config: Dict[str, Any], run_name: str) -> Dict[str, A
 
     pod_name = template.get("name", "ultralytics-yolo-training")
     volume_mount_path = template.get("volumeMountPath", "/workspace")
-    support_public_ip = bool(template.get("supportPublicIp", False))
+    # Allow config to turn on public IP exposure for SSH-based artifact download.
+    support_public_ip = bool(runpod_cfg.get("support_public_ip", template.get("supportPublicIp", False)))
+
+    # Ports to expose; required for SSH/scp downloads.
+    ports = runpod_cfg.get("ssh_ports", template.get("ports", []))
 
     # Environment variables passed into the pod. These drive the entrypoint and scripts.
     env_vars = {
@@ -72,6 +77,9 @@ def build_pod_request_body(config: Dict[str, Any], run_name: str) -> Dict[str, A
         "supportPublicIp": support_public_ip,
         "env": env_vars,
     }
+
+    if ports:
+        body["ports"] = ports
 
     if start_cmd:
         body["dockerStartCmd"] = start_cmd
@@ -179,6 +187,72 @@ def download_artifacts_stub(output_tar_path: str, run_name: str) -> Path:
     return artifacts_root
 
 
+def download_artifacts_via_scp(
+    api_base: str,
+    api_key: str,
+    pod_id: str,
+    output_tar_path: str,
+    run_name: str,
+    ssh_key_path: str,
+) -> Path:
+    """
+    Download the output tarball from the Pod using scp.
+
+    This requires:
+      - The Pod to expose SSH on a public IP (supportPublicIp: true, ports including 22/tcp).
+      - An SSH private key accessible in the orchestrator container at ssh_key_path.
+    """
+    artifacts_root = Path("artifacts") / run_name
+    artifacts_root.mkdir(parents=True, exist_ok=True)
+    local_tar = artifacts_root / "artifacts.tar.gz"
+
+    pod = get_pod(api_base, api_key, pod_id)
+    public_ip = pod.get("publicIp")
+    port_mappings = pod.get("portMappings") or {}
+    ssh_port = port_mappings.get("22")
+
+    if not public_ip or not ssh_port:
+        print(
+            "[orchestrator] Pod does not have a public IP or SSH port mapping. "
+            "Falling back to manual download instructions.",
+            file=sys.stderr,
+        )
+        return download_artifacts_stub(output_tar_path, run_name)
+
+    if not Path(ssh_key_path).exists():
+        print(
+            f"[orchestrator] SSH key not found at {ssh_key_path}. "
+            "Falling back to manual download instructions.",
+            file=sys.stderr,
+        )
+        return download_artifacts_stub(output_tar_path, run_name)
+
+    scp_cmd = [
+        "scp",
+        "-i",
+        ssh_key_path,
+        "-o",
+        "StrictHostKeyChecking=no",
+        "-P",
+        str(ssh_port),
+        f"root@{public_ip}:{output_tar_path}",
+        str(local_tar),
+    ]
+
+    print(f"[orchestrator] Downloading artifacts via scp from {public_ip}:{ssh_port}")
+    try:
+        subprocess.run(scp_cmd, check=True)
+        print(f"[orchestrator] Artifacts downloaded to {local_tar}")
+    except subprocess.CalledProcessError as exc:
+        print(
+            f"[orchestrator] scp failed: {exc}. Falling back to manual instructions.",
+            file=sys.stderr,
+        )
+        return download_artifacts_stub(output_tar_path, run_name)
+
+    return artifacts_root
+
+
 def main() -> None:
     load_dotenv()
 
@@ -210,7 +284,8 @@ def main() -> None:
         wait_for_pod_completion(api_base, api_key, pod_id)
 
         output_tar_path = runpod_cfg.get("output_tar_path", f"/workspace/output/{run_name}.tar.gz")
-        download_artifacts_stub(output_tar_path, run_name)
+        ssh_key_path = runpod_cfg.get("ssh_key_path", "volume/id_rsa_runpod")
+        download_artifacts_via_scp(api_base, api_key, pod_id, output_tar_path, run_name, ssh_key_path)
     finally:
         if pod_id and runpod_cfg.get("auto_delete_pod", True):
             delete_pod(api_base, api_key, pod_id)

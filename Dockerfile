@@ -2,9 +2,10 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# System deps (curl, ca-certificates) in case you want to debug or fetch configs
+# System deps (curl, ca-certificates, openssh-client) in case you want to debug,
+# fetch configs, or use scp from the orchestrator container.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl && \
+    ca-certificates curl openssh-client && \
     rm -rf /var/lib/apt/lists/*
 
 # Copy project files into the image (config will be provided at runtime from ./volume)
