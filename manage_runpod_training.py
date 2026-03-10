@@ -41,6 +41,27 @@ def build_pod_request_body(config: Dict[str, Any], run_name: str) -> Dict[str, A
     # dockerStartCmd: prefer config over template.
     start_cmd = runpod_cfg.get("command", template.get("command", []))
 
+    # True SSH in container (https://www.runpod.io/blog/how-to-achieve-true-ssh-in-runpod):
+    # install OpenSSH in the container and add our public key so SCP/SSH land inside the container.
+    ssh_key_path = runpod_cfg.get("ssh_key_path", "volume/id_rsa_runpod")
+    ssh_public_key_path = runpod_cfg.get("ssh_public_key_path", f"{ssh_key_path}.pub")
+    public_key_content: str | None = None
+    if Path(ssh_public_key_path).exists():
+        public_key_content = Path(ssh_public_key_path).read_text().strip()
+    elif Path(ssh_key_path).exists():
+        # Try to derive public key from private key (e.g. ssh-keygen -y)
+        try:
+            result = subprocess.run(
+                ["ssh-keygen", "-y", "-f", ssh_key_path],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0 and result.stdout:
+                public_key_content = result.stdout.strip()
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            pass
+
     pod_name = template.get("name", "ultralytics-yolo-training")
     volume_mount_path = template.get("volumeMountPath", "/workspace")
     # Allow config to turn on public IP exposure for SSH-based artifact download.
@@ -64,6 +85,8 @@ def build_pod_request_body(config: Dict[str, Any], run_name: str) -> Dict[str, A
 
     # Filter out empty values just in case.
     env_vars = {k: v for k, v in env_vars.items() if v}
+    if public_key_content:
+        env_vars["SSH_PUBLIC_KEY"] = public_key_content
 
     body: Dict[str, Any] = {
         "name": pod_name,
@@ -82,7 +105,20 @@ def build_pod_request_body(config: Dict[str, Any], run_name: str) -> Dict[str, A
         body["ports"] = ports
 
     if start_cmd:
-        body["dockerStartCmd"] = start_cmd
+        if public_key_content and isinstance(start_cmd, list) and len(start_cmd) >= 2:
+            # Prepend OpenSSH install + authorized_keys so true SSH runs inside the container.
+            inner = start_cmd[-1] if start_cmd else ""
+            setup_ssh = (
+                "apt-get update -qq && apt-get install -y -qq openssh-server "
+                "&& mkdir -p /root/.ssh "
+                "&& echo \"$SSH_PUBLIC_KEY\" >> /root/.ssh/authorized_keys "
+                "&& chmod 600 /root/.ssh/authorized_keys "
+                "&& (service ssh start 2>/dev/null || sshd) &"
+            )
+            wrapped_inner = f"(({setup_ssh}) || true) ; {inner}"
+            body["dockerStartCmd"] = start_cmd[:-1] + [wrapped_inner]
+        else:
+            body["dockerStartCmd"] = start_cmd
 
     return body
 

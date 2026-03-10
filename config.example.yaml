@@ -34,7 +34,10 @@ runpod:
   # container can scp the output tarball back to your local machine.
   support_public_ip: true
   ssh_ports: ["22/tcp"]                     # Ports to expose; 22/tcp required for scp
-  ssh_key_path: "volume/id_rsa_runpod"      # Path INSIDE the orchestrator container (mounted from host)
+  ssh_key_path: "volume/id_rsa_runpod"     # Private key (orchestrator uses this to scp from pod)
+  # ssh_public_key_path: "volume/id_rsa_runpod.pub"  # Optional; default is ssh_key_path + ".pub"
+  # If a .pub file exists (or ssh-keygen -y can derive it), the container start command will
+  # install OpenSSH and add this key so true SSH/SCP runs inside the container (see RunPod blog).
 
   # Container / image settings
   image: "ultralytics/ultralytics:latest"   # Ultralytics official image with YOLO support and CUDA
