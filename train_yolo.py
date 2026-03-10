@@ -28,7 +28,9 @@ def _resolve_model_name(model_name: str) -> str:
 def train() -> None:
     YOLO = _load_ultralytics()
 
-    model_name = os.getenv("MODEL_NAME", "yolo9-t")
+    # Default to an official Ultralytics YOLOv9-t weights file; this can be
+    # overridden via the MODEL_NAME environment variable or config.yaml.
+    model_name = os.getenv("MODEL_NAME", "yolov9t.pt")
     imgsz = int(os.getenv("IMGSZ", "640"))
     batch = int(os.getenv("BATCH", "16"))
     epochs = int(os.getenv("EPOCHS", "100"))

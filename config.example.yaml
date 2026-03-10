@@ -1,7 +1,9 @@
 roboflow_dataset_url: "https://universe.roboflow.com/YOUR_WORKSPACE/YOUR_DATASET/download?format=yolov9"
 
 # Ultralytics / YOLO model configuration
-model_name: "yolo9-t"         # Requested model; adjust if your Ultralytics version uses a different alias
+# Use an official Ultralytics YOLOv9 weights file so the 'ultralytics' package
+# can download and train it directly.
+model_name: "yolov9t.pt"      # Ultralytics YOLOv9-tiny; change to yolov9s.pt, yolov9m.pt, etc. if desired
 imgsz: 640                    # Training image size
 batch: 16                     # Batch size (fits comfortably on a 24GB GPU for many datasets)
 epochs: 100                   # Number of training epochs
