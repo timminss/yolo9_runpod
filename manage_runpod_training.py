@@ -44,10 +44,10 @@ def build_pod_request_body(config: Dict[str, Any], run_name: str) -> Dict[str, A
     pod_name = template.get("name", "ultralytics-yolo-training")
     volume_mount_path = template.get("volumeMountPath", "/workspace")
     # Allow config to turn on public IP exposure for SSH-based artifact download.
-    support_public_ip = bool(runpod_cfg.get("support_public_ip", template.get("supportPublicIp", False)))
+    support_public_ip = bool(runpod_cfg.get("support_public_ip", template.get("supportPublicIp", True)))
 
-    # Ports to expose; required for SSH/scp downloads.
-    ports = runpod_cfg.get("ssh_ports", template.get("ports", []))
+    # Ports to expose; required for SSH/scp downloads. Default 22/tcp for scp.
+    ports = runpod_cfg.get("ssh_ports", template.get("ports", ["22/tcp"]))
 
     # Environment variables passed into the pod. These drive the entrypoint and scripts.
     env_vars = {
@@ -138,22 +138,33 @@ def delete_pod(api_base: str, api_key: str, pod_id: str) -> None:
         print(f"[orchestrator] Deleted pod {pod_id}")
 
 
-def wait_for_pod_completion(api_base: str, api_key: str, pod_id: str, poll_interval: int = 30) -> None:
+def _unwrap_pod(pod: Dict[str, Any]) -> Dict[str, Any]:
+    """Handle API response that may nest the pod under a 'pod' key."""
+    if "pod" in pod and isinstance(pod["pod"], dict):
+        return pod["pod"]
+    return pod
+
+
+def wait_for_pod_completion(api_base: str, api_key: str, pod_id: str, poll_interval: int = 30) -> Dict[str, Any]:
     """
     Poll pod status until it reaches an exited or terminated state.
-
-    This relies on the pod exiting after the entrypoint script completes.
+    Returns the last pod state from when it was RUNNING (so we keep publicIp/portMappings
+    for scp even after the pod has exited and the API may clear them).
     """
     terminal_statuses = {"EXITED", "TERMINATED"}
+    last_running_pod: Dict[str, Any] = {}
 
     while True:
-        pod = get_pod(api_base, api_key, pod_id)
+        pod = _unwrap_pod(get_pod(api_base, api_key, pod_id))
         status = pod.get("status") or pod.get("desiredStatus")
         print(f"[orchestrator] Pod {pod_id} status: {status}")
 
+        if status == "RUNNING":
+            last_running_pod = pod
+
         if status in terminal_statuses:
             print(f"[orchestrator] Pod {pod_id} reached terminal status: {status}")
-            return
+            return last_running_pod
 
         time.sleep(poll_interval)
 
@@ -194,6 +205,7 @@ def download_artifacts_via_scp(
     output_tar_path: str,
     run_name: str,
     ssh_key_path: str,
+    pod_info: Dict[str, Any] | None = None,
 ) -> Path:
     """
     Download the output tarball from the Pod using scp.
@@ -201,15 +213,22 @@ def download_artifacts_via_scp(
     This requires:
       - The Pod to expose SSH on a public IP (supportPublicIp: true, ports including 22/tcp).
       - An SSH private key accessible in the orchestrator container at ssh_key_path.
+
+    If pod_info is provided (e.g. from wait_for_pod_completion), use it for publicIp/portMappings
+    so we can scp even after the pod has exited and the API may no longer return them.
     """
     artifacts_root = Path("artifacts") / run_name
     artifacts_root.mkdir(parents=True, exist_ok=True)
     local_tar = artifacts_root / "artifacts.tar.gz"
 
-    pod = get_pod(api_base, api_key, pod_id)
+    if pod_info:
+        pod = pod_info
+    else:
+        pod = _unwrap_pod(get_pod(api_base, api_key, pod_id))
     public_ip = pod.get("publicIp")
     port_mappings = pod.get("portMappings") or {}
-    ssh_port = port_mappings.get("22")
+    # portMappings can be {"22": 12345}; key might be string or int
+    ssh_port = port_mappings.get("22") or port_mappings.get(22)
 
     if not public_ip or not ssh_port:
         print(
@@ -281,11 +300,14 @@ def main() -> None:
     pod_id = None
     try:
         pod_id = create_pod(api_base, api_key, pod_body)
-        wait_for_pod_completion(api_base, api_key, pod_id)
+        last_running_pod = wait_for_pod_completion(api_base, api_key, pod_id)
 
         output_tar_path = runpod_cfg.get("output_tar_path", f"/workspace/output/{run_name}.tar.gz")
+        output_tar_path = output_tar_path.replace("${RUN_NAME}", run_name)
         ssh_key_path = runpod_cfg.get("ssh_key_path", "volume/id_rsa_runpod")
-        download_artifacts_via_scp(api_base, api_key, pod_id, output_tar_path, run_name, ssh_key_path)
+        download_artifacts_via_scp(
+            api_base, api_key, pod_id, output_tar_path, run_name, ssh_key_path, pod_info=last_running_pod
+        )
     finally:
         if pod_id and runpod_cfg.get("auto_delete_pod", True):
             delete_pod(api_base, api_key, pod_id)

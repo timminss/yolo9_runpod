@@ -1,5 +1,6 @@
 docker run --rm \
-  -v "$PWD/volume:/app/volume" \
-  runpod-yolo-orchestrator \
-  --config volume/config.yaml \
-  --run-name test_run
+    -v "$PWD/volume:/app/volume" \
+    -v "$PWD/artifacts:/app/artifacts" \
+    runpod-yolo-orchestrator \
+    --config volume/config.yaml \
+    --run-name test_run
