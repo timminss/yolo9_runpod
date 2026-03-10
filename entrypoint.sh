@@ -26,7 +26,7 @@ export PROJECT_DIR="${PROJECT_DIR:-/workspace/runs}"
 mkdir -p "${DATA_ROOT}" /workspace/output "${PROJECT_DIR}"
 
 echo "[entrypoint] Downloading dataset..."
-python /workspace/download_dataset.py
+python download_dataset.py
 
 # Try to infer data.yaml path if not explicitly set
 if [[ -z "${DATA_YAML_PATH:-}" ]]; then
@@ -46,7 +46,7 @@ EOF
 fi
 
 echo "[entrypoint] Training model '${MODEL_NAME}' with data '${DATA_YAML_PATH}'"
-python /workspace/train_yolo.py
+python train_yolo.py
 
 TAR_PATH="/workspace/output/${RUN_NAME}.tar.gz"
 echo "[entrypoint] Packaging training artifacts into ${TAR_PATH}"
