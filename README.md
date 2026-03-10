@@ -88,18 +88,20 @@ You can customize the pod template further in `runpod/runpod_pod_template.json` 
 
 ## 5. Container-side scripts
 
-Inside the pod, we expect the following helper scripts under `/workspace`:
+Inside the pod, we expect the following helper scripts under `/workspace/yolo9_runpod`:
 
 - `download_dataset.py` – downloads and unpacks the Roboflow dataset.
 - `train_yolo.py` – runs training using the Ultralytics CLI or Python API.
 - `entrypoint.sh` – orchestrates download + train + packaging.
 
-There are a few ways to ensure these files are available in the pod:
+When a pod starts, the configured `runpod.command` will:
 
-- **Recommended**: Build your own small image based on `ultralytics/ultralytics:latest` that copies in these scripts and use that image in `runpod.runpod_pod_template.json`.
-- Alternatively, you can clone this repo from a public Git host as part of the pod `command`, then invoke `entrypoint.sh` from the cloned folder.
+1. `cd /workspace`
+2. `git clone https://github.com/timminss/yolo9_runpod.git` into `/workspace/yolo9_runpod` (if it is not already present).
+3. `cd /workspace/yolo9_runpod`
+4. Run `bash entrypoint.sh`
 
-The repo includes the script sources so you can copy them into a Dockerfile or another distribution mechanism.
+This way the pod always pulls the latest code from the public GitHub repo without needing a custom image.
 
 ---
 

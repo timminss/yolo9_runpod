@@ -29,13 +29,13 @@ runpod:
 
   # Container / image settings
   image: "ultralytics/ultralytics:latest"   # Ultralytics official image with YOLO support and CUDA
-  # Command executed inside the pod to start training
-  # The local orchestration script will mount env vars so this entrypoint
-  # can download the dataset, run training, and package outputs.
+  # Command executed inside the pod to start training.
+  # Here we clone the public GitHub repo into /workspace/yolo9_runpod
+  # and run the entrypoint from there.
   command: [
     "bash",
     "-lc",
-    "bash /workspace/entrypoint.sh"
+    "cd /workspace && if [ ! -d yolo9_runpod ]; then git clone https://github.com/timminss/yolo9_runpod.git; fi && cd yolo9_runpod && bash entrypoint.sh"
   ]
 
   # Optional idle timeout in minutes for automatic shutdown of idle pods
